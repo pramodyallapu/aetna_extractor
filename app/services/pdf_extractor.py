@@ -1,7 +1,7 @@
 import pdfplumber
 import re
 import pandas as pd
-import os
+import io
 from math import isfinite
 from typing import List, Dict
 from pypdf import PdfReader
@@ -111,19 +111,19 @@ def fallback_count_services_global(lines: List[str]):
             count += 1
     return count
 
-def extract_text_from_pdf(file_path: str) -> List[str]:
+def extract_text_from_pdf_bytes(pdf_bytes: bytes) -> List[str]:
     raw_lines = []
     
     # Try pypdf first
     try:
-        reader = PdfReader(file_path)
+        reader = PdfReader(io.BytesIO(pdf_bytes))
         for page in reader.pages:
             txt = page.extract_text() or ""
             for l in txt.splitlines():
                 raw_lines.append(l)
     except Exception:
         # Fallback to pdfplumber
-        with pdfplumber.open(file_path) as pdf:
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
             for p in pdf.pages:
                 txt = p.extract_text() or ""
                 for l in txt.splitlines():
@@ -131,8 +131,8 @@ def extract_text_from_pdf(file_path: str) -> List[str]:
     
     return raw_lines
 
-def process_single_pdf(file_path: str, original_name: str, insurance_name: str) -> Dict:
-    raw_lines = extract_text_from_pdf(file_path)
+def process_single_pdf_bytes(pdf_bytes: bytes, filename: str, insurance_name: str) -> Dict:
+    raw_lines = extract_text_from_pdf_bytes(pdf_bytes)
     
     # Normalize lines
     normalized_lines = [reverse_if_indicated(l) for l in raw_lines]
@@ -163,7 +163,7 @@ def process_single_pdf(file_path: str, original_name: str, insurance_name: str) 
             break
     
     if not page_count:
-        with pdfplumber.open(file_path) as pdf:
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
             page_count = len(pdf.pages)
     
     # Find trace amount/number and printed date
@@ -206,7 +206,7 @@ def process_single_pdf(file_path: str, original_name: str, insurance_name: str) 
         claim_count = svc_global
     
     return {
-        "File Name": original_name,
+        "File Name": filename,
         "Insurance Name": insurance_name,
         "Practice Name": practice,
         "Check #": trace_no or "",
@@ -216,14 +216,9 @@ def process_single_pdf(file_path: str, original_name: str, insurance_name: str) 
         "Check Amount": (f"{trace_amt:.2f}" if (trace_amt is not None and isfinite(trace_amt)) else "")
     }
 
-def process_pdfs(files: List[Dict], insurance_name: str) -> List[Dict]:
+def process_pdfs_directly(files: List[Dict], insurance_name: str) -> List[Dict]:
     results = []
     for file_info in files:
-        result = process_single_pdf(file_info["path"], file_info["original_name"], insurance_name)
+        result = process_single_pdf_bytes(file_info["content"], file_info["filename"], insurance_name)
         results.append(result)
     return results
-
-def cleanup_files(files: List[Dict]):
-    for file_info in files:
-        if os.path.exists(file_info["path"]):
-            os.remove(file_info["path"])

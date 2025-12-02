@@ -213,46 +213,35 @@
             100% { transform: rotate(360deg); }
         }
         
-        .results {
-            display: none;
-            margin-top: 30px;
-            padding: 20px;
-            background: #f8f9fa;
-            border-radius: 10px;
+        .output-format {
+            margin-bottom: 20px;
         }
         
-        .download-buttons {
+        .format-options {
             display: flex;
             gap: 10px;
-            margin-top: 20px;
+            margin-top: 10px;
         }
         
-        .download-btn {
+        .format-option {
             flex: 1;
+            text-align: center;
             padding: 12px;
-            border: none;
+            border: 2px solid #e0e0e0;
             border-radius: 8px;
-            font-size: 16px;
             cursor: pointer;
             transition: all 0.3s;
-            text-align: center;
-            text-decoration: none;
-            display: inline-block;
         }
         
-        .csv-btn {
-            background: #28a745;
+        .format-option:hover {
+            border-color: #667eea;
+            background: #f8f9fa;
+        }
+        
+        .format-option.selected {
+            border-color: #667eea;
+            background: #667eea;
             color: white;
-        }
-        
-        .excel-btn {
-            background: #007bff;
-            color: white;
-        }
-        
-        .download-btn:hover {
-            opacity: 0.9;
-            transform: translateY(-2px);
         }
         
         .error {
@@ -308,6 +297,18 @@
             </select>
         </div>
         
+        <div class="output-format">
+            <label>Output Format:</label>
+            <div class="format-options">
+                <div class="format-option selected" data-format="csv" onclick="selectFormat('csv')">
+                    📊 CSV
+                </div>
+                <div class="format-option" data-format="excel" onclick="selectFormat('excel')">
+                    📈 Excel
+                </div>
+            </div>
+        </div>
+        
         <button class="submit-btn" id="submitBtn" onclick="uploadFiles()">Process PDF Files</button>
         
         <div class="loading" id="loading">
@@ -317,17 +318,11 @@
         
         <div class="error" id="error"></div>
         <div class="success" id="success"></div>
-        
-        <div class="results" id="results">
-            <h3>Extraction Complete!</h3>
-            <p>Your files have been processed successfully.</p>
-            <div class="download-buttons" id="downloadButtons"></div>
-        </div>
     </div>
     
     <script>
         let selectedFiles = [];
-        let outputFiles = {};
+        let selectedFormat = 'csv';
         
         // Drag and drop functionality
         const uploadArea = document.getElementById('uploadArea');
@@ -389,6 +384,14 @@
             updateFileList();
         }
         
+        function selectFormat(format) {
+            selectedFormat = format;
+            document.querySelectorAll('.format-option').forEach(el => {
+                el.classList.remove('selected');
+            });
+            document.querySelector(`.format-option[data-format="${format}"]`).classList.add('selected');
+        }
+        
         async function uploadFiles() {
             if (selectedFiles.length === 0) {
                 showError('Please select at least one PDF file');
@@ -409,6 +412,7 @@
                 formData.append('files', file);
             });
             formData.append('insurance_name', insuranceName);
+            formData.append('output_format', selectedFormat);
             
             try {
                 const response = await fetch('/api/upload-pdfs', {
@@ -416,14 +420,42 @@
                     body: formData
                 });
                 
-                const result = await response.json();
-                
                 if (response.ok) {
-                    outputFiles = result.output_files;
-                    showSuccess(`Successfully processed ${result.total_files} file(s)`);
-                    showResults(result);
+                    // Get filename from Content-Disposition header
+                    const contentDisposition = response.headers.get('Content-Disposition');
+                    let filename = 'extracted_data';
+                    
+                    if (contentDisposition) {
+                        const match = contentDisposition.match(/filename="(.+)"/);
+                        if (match) {
+                            filename = match[1];
+                        }
+                    }
+                    
+                    // Create blob from response
+                    const blob = await response.blob();
+                    
+                    // Create download link
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    
+                    // Cleanup
+                    window.URL.revokeObjectURL(url);
+                    document.body.removeChild(a);
+                    
+                    showSuccess(`Successfully processed ${selectedFiles.length} file(s) and downloaded ${filename}`);
+                    
+                    // Clear files after successful download
+                    selectedFiles = [];
+                    updateFileList();
+                    
                 } else {
-                    showError(result.detail || 'An error occurred');
+                    const error = await response.json();
+                    showError(error.detail || 'An error occurred');
                 }
             } catch (error) {
                 showError('Network error: ' + error.message);
@@ -431,56 +463,6 @@
                 submitBtn.disabled = false;
                 loading.style.display = 'none';
             }
-        }
-        
-        function showResults(result) {
-            const resultsDiv = document.getElementById('results');
-            const downloadButtons = document.getElementById('downloadButtons');
-            
-            // Extract file ID from path
-            const csvPath = outputFiles.csv;
-            const fileId = csvPath.split('_')[1].split('.')[0];
-            
-            downloadButtons.innerHTML = `
-                <a href="/api/download/csv/${fileId}" class="download-btn csv-btn" download>
-                    📥 Download CSV
-                </a>
-                <a href="/api/download/excel/${fileId}" class="download-btn excel-btn" download>
-                    📊 Download Excel
-                </a>
-            `;
-            
-            resultsDiv.style.display = 'block';
-            
-            // Display extracted data in a table
-            const tableHtml = `
-                <div style="margin-top: 20px; overflow-x: auto;">
-                    <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
-                        <thead>
-                            <tr style="background: #667eea; color: white;">
-                                <th style="padding: 12px; text-align: left;">File Name</th>
-                                <th style="padding: 12px; text-align: left;">Practice Name</th>
-                                <th style="padding: 12px; text-align: left;">Check #</th>
-                                <th style="padding: 12px; text-align: left;">Claim Count</th>
-                                <th style="padding: 12px; text-align: left;">Check Amount</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${result.data.map(item => `
-                                <tr style="border-bottom: 1px solid #e0e0e0;">
-                                    <td style="padding: 12px;">${item['File Name']}</td>
-                                    <td style="padding: 12px;">${item['Practice Name'] || 'N/A'}</td>
-                                    <td style="padding: 12px;">${item['Check #'] || 'N/A'}</td>
-                                    <td style="padding: 12px;">${item['Claim Count']}</td>
-                                    <td style="padding: 12px;">${item['Check Amount'] || 'N/A'}</td>
-                                </tr>
-                            `).join('')}
-                        </tbody>
-                    </table>
-                </div>
-            `;
-            
-            resultsDiv.innerHTML += tableHtml;
         }
         
         function showError(message) {
@@ -497,6 +479,8 @@
             const successDiv = document.getElementById('success');
             successDiv.textContent = message;
             successDiv.style.display = 'block';
+            // Hide success message after 5 seconds
+            setTimeout(hideSuccess, 5000);
         }
         
         function hideSuccess() {
